@@ -1,0 +1,13 @@
+import { randomUUID } from 'node:crypto';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { config, configured } from './config.js';
+import { Store } from './store.js';
+import { SubgraphProxy } from './graph.js';
+import { HederaPayments } from './payments.js';
+import { buildSession } from './mcp.js';
+if (!configured) throw new Error('Configure GATEWAY_API_KEY and HEDERA_SELLER_ACCOUNT_ID in the operator environment.');
+const store = new Store(config.DATA_DIR);
+const graph = new SubgraphProxy(config.SUBGRAPH_MCP_URL, config.GATEWAY_API_KEY);
+const session = buildSession(randomUUID(), config, graph, new HederaPayments(config, store), store);
+await session.server.connect(new StdioServerTransport());
+process.stdin.on('end', async () => { await session.dispose(); await graph.close(); store.close(); });

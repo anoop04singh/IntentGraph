@@ -1,0 +1,16 @@
+services:
+  intentgraph:
+    build: .
+    restart: unless-stopped
+    stop_grace_period: 120s
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATA_DIR: /app/data
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - intentgraph-data:/app/data
+volumes:
+  intentgraph-data:
