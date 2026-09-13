@@ -142,8 +142,34 @@ npm audit --omit=peer
 
 Tests use in-memory MCP clients, a real local HTTP transport, actual locally serialized Hedera test transactions, and **mock facilitator responses**. They do not move money or call the live Graph gateway. They cover hidden tools, direct-call rejection, schema validation, independent sessions, quotas, duplicate/cross-process proof replay, failed/uncertain settlement, concurrency, HTTP cleanup, and public statistics.
 
-The Blocky402 testnet `/supported` endpoint was checked during implementation. A full live settlement/query remains an operator acceptance test requiring the Graph key, receiving account, and a funded payer wallet. Docker packaging is supplied but has not been run in this Windows environment.
+The Blocky402 testnet `/supported` endpoint was checked during implementation. The Gemini playground was also verified live: the shared testnet wallet settled 0.01 HBAR through Blocky402, enabled the Graph tools, inspected a schema, and returned five Uniswap swaps. Automated tests remain isolated from live services. Docker packaging is supplied but has not been run in this Windows environment.
 
 Dependencies include scoped overrides for patched protobuf, gRPC, and WebSocket libraries pulled in by the Hedera SDK; preserve the lockfile and retest signing when updating them. Unused React Native peer tooling is omitted through `.npmrc`.
 
 References: [The Graph Subgraphs MCP](https://thegraph.com/docs/en/subgraphs/tooling/subgraph-mcp/introduction/), [GraphOps source](https://github.com/graphops/subgraph-mcp), [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk), [x402 source](https://github.com/x402-foundation/x402), [Blocky402 capabilities](https://api.testnet.blocky402.com/supported).
+
+## Live Gemini playground
+
+Open `/playground` from the landing page. The browser streams a real Gemini agent run through a fresh local MCP HTTP connection: quote, shared-wallet signature, Blocky402 settlement, newly enabled Graph tools, discovery, schema inspection, GraphQL data, and a grounded answer. Expand console entries to inspect arguments and responses, filter tools/payments/data, download a redacted trace, or switch the result to raw data. Landing-page counters include these actual settlements and queries.
+
+Set `GEMINI_API_KEY` in the server `.env`. `GEMINI_MODEL` defaults to `gemini-2.5-flash`. Neither Gemini nor Graph keys are sent to the browser. External MCP users continue to use their own agent without requiring a Graph key; Gemini is only the optional website demonstration client.
+
+### Shared testnet wallet
+
+```sh
+npm run wallet:setup
+# Fund the printed EVM address at https://portal.hedera.com/faucet.
+# Complete the faucet CAPTCHA yourself, then activate the funded account:
+npm run wallet:setup -- --activate
+```
+
+The generated ECDSA key persists in `DATA_DIR/demo-wallet.json`, excluded from Git and web assets. The faucet creates the Hedera account; activation signs a self-paid transaction transferring one tinybar to the configured receiving account. All visitors share this funded account, while each run has its own gated MCP session. No visitor wallet connection is needed. An optional operator `HEDERA_PAT` enables `npm run wallet:setup -- --fund --activate` using Hedera's official faucet API. Funding is an operator setup action, never a public website endpoint.
+
+Keep the wallet file private and back it up securely. Production should use a local persistent volume with restrictive OS permissions, outside cloud-synced folders. The public status endpoint exposes only its address, account ID and balance. The demo signer accepts only the configured exact native HBAR amount, configured recipient, and Hedera testnet. Signed payment proofs remain on the server and are redacted from traces.
+
+The default shared budget is 30 attempted runs per UTC day (`DEMO_DAILY_RUN_LIMIT`), persisted in SQLite. One demo runs at a time. Each run allows at most one payment attempt, 14 model turns (`DEMO_MAX_STEPS`), 24 model tool calls and five minutes, with bounded prompt/result sizes. Failed attempts count toward the daily quota. The HTTP route also limits each source to six requests per ten minutes. Set `DEMO_ENABLED=false` to disable the demo. The configured limits bound shared API use; visitors cannot provide wallet, model, recipient, price or MCP URL overrides.
+
+Stopping a run disconnects the viewer and stops subsequent model work. A payment already submitted is allowed to finish before the session closes, so its receipt is recorded safely. Settlement uncertainty remains fail-closed. A run may pay and still fail to find usable data; the UI reports that honestly. Query-count discovery metrics are only ranking hints, so a zero count still permits schema inspection and an actual query attempt.
+
+For deployment, disable reverse-proxy buffering and caching on `/api/playground/run`, support streamed responses lasting several minutes, and keep `/api/playground/status` uncached. This shared-wallet implementation runs as a single application instance.
+
