@@ -16,7 +16,7 @@ const env = z.object({
   DATA_DIR: z.string().default('./data'),
   MAX_SESSIONS: z.coerce.number().int().min(1).max(10000).default(100),
   GEMINI_API_KEY: z.string().default(''),
-  GEMINI_MODEL: z.string().regex(/^[a-zA-Z0-9._-]+$/).default('gemini-2.5-flash'),
+  GEMINI_MODEL: z.string().regex(/^[a-zA-Z0-9._-]+$/).default('gemini-3.5-flash-lite'),
   DEMO_ENABLED: z.enum(['true', 'false']).default('true').transform(v => v === 'true'),
   DEMO_DAILY_RUN_LIMIT: z.coerce.number().int().min(1).max(1000).default(30),
   DEMO_MAX_STEPS: z.coerce.number().int().min(4).max(30).default(14),
@@ -26,3 +26,5 @@ const env = z.object({
 export const config = env;
 export type Config = typeof config;
 export const configured = Boolean(env.GATEWAY_API_KEY && env.HEDERA_SELLER_ACCOUNT_ID);
+
+

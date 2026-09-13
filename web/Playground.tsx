@@ -6,12 +6,12 @@ import './playground.css';
 
 type Status = { ready: boolean; enabled: boolean; busy: boolean; message: string; model: string; runsRemaining: number; priceTinybars: string; maxSteps: number; wallet: { address?: string; accountId?: string; ready: boolean; balanceTinybars?: string; message: string; explorerUrl?: string; faucetUrl?: string } };
 type Event = { type: string; at: string; name?: string; callId?: string; args?: unknown; result?: any; message?: string; text?: string; tools?: string[]; locked?: boolean; requirements?: { amount: string; payTo: string; network: string }; settlement?: { transaction?: string; network?: string }; status?: string; grounded?: boolean; paid?: boolean; querySucceeded?: boolean; durationMs?: number; step?: number; [key: string]: unknown };
-const examples = ['Show the 5 latest Uniswap V3 swaps on Ethereum with amounts and token symbols.', 'Find active Aave subgraphs on Ethereum and query a small sample of lending data.', 'Show the 5 largest recent Uniswap V3 pools on Ethereum by TVL in USD.'];
+const examples = ['Show the 5 latest Uniswap V3 swaps on Ethereum with amounts and token symbols.', 'Find active Aave subgraphs on Ethereum and query a small sample of lending data.', 'Show the top 5 Uniswap V3 pools on Ethereum by TVL in USD reported by the selected subgraph. Flag any data-quality or freshness limitations.'];
 function formatHbar(tiny?: string) { if (!tiny) return '—'; const n = BigInt(tiny); return `${n / 100000000n}.${(n % 100000000n).toString().padStart(8, '0')}`.replace(/\.?0+$/, ''); }
 function label(event: Event) {
   if (event.type === 'tool_call') return event.name;
   if (event.type === 'tool_result') return `${event.name} · ${event.isError ? 'error' : 'response'}`;
-  return ({ run_started: 'Starting MCP session', tools_changed: event.locked ? 'Toolkit locked' : 'Real tools enabled', agent_working: `Gemini · step ${event.step}`, payment_quote: 'x402 quote received', wallet_signed: 'Shared wallet signed', payment_settled: 'Payment settled on Hedera', answer: 'Agent answer', error: 'Run needs attention', done: `Run ${event.status}` } as Record<string,string>)[event.type] ?? event.type;
+  return ({ workflow_guard: 'Pipeline guard · call skipped', run_started: 'Starting MCP session', tools_changed: event.locked ? 'Toolkit locked' : 'Real tools enabled', agent_working: `Gemini · step ${event.step}`, payment_quote: 'x402 quote received', wallet_signed: 'Shared wallet signed', payment_settled: 'Payment settled on Hedera', answer: 'Agent answer', error: 'Run needs attention', done: `Run ${event.status}` } as Record<string,string>)[event.type] ?? event.type;
 }
 function eventCategory(e: Event) { return e.type.startsWith('payment') || e.type === 'wallet_signed' ? 'Payments' : e.type === 'tool_result' ? 'Data' : e.type === 'tool_call' || e.type === 'tools_changed' ? 'Tools' : 'Agent'; }
 export default function Playground() {
@@ -37,7 +37,7 @@ export default function Playground() {
   const done = [...events].reverse().find(e => e.type === 'done');
   const toolCalls = events.filter(e => e.type === 'tool_call');
   const queryResults = events.filter(e => e.type === 'tool_result' && e.name?.startsWith('execute_query_'));
-  const current = [...events].reverse().find(e => ['tool_call', 'payment_quote', 'wallet_signed', 'payment_settled', 'agent_working', 'error', 'done'].includes(e.type));
+  const current = [...events].reverse().find(e => ['workflow_guard', 'tool_call', 'payment_quote', 'wallet_signed', 'payment_settled', 'agent_working', 'error', 'done'].includes(e.type));
   const phase = !events.length ? -1 : answer ? 5 : queryResults.length || toolCalls.some(e=>e.name?.startsWith('execute_query_')) ? 4 : toolCalls.some(e=>e.name?.startsWith('get_schema_')) ? 3 : unlocked ? 2 : events.some(e=>e.type === 'payment_quote') ? 1 : 0;
   const download = () => { const blob = new Blob([JSON.stringify({ prompt, events }, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'intentgraph-run.json'; a.click(); URL.revokeObjectURL(url); };
   async function run() {
@@ -69,5 +69,8 @@ export default function Playground() {
     </main>
   </div>;
 }
+
+
+
 
 

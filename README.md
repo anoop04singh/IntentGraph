@@ -409,7 +409,7 @@ On PowerShell, use `Copy-Item .env.example .env`. Do not overwrite an existing c
 | `GATEWAY_API_KEY` | Operator key for The Graph; never shared with visitors |
 | `HEDERA_SELLER_ACCOUNT_ID` | Hedera testnet receiving account |
 | `GEMINI_API_KEY` | Server-side key for the browser demonstration |
-| `GEMINI_MODEL` | Demo model; defaults to `gemini-2.5-flash` |
+| `GEMINI_MODEL` | Demo model; defaults to `gemini-3.5-flash-lite` |
 | `PUBLIC_URL` | Public base URL used in client installation snippets |
 | `PORT` | Server port; defaults to `3000` |
 | `ALLOWED_ORIGINS` | Allowed browser origins, including your actual site origin |
@@ -488,3 +488,17 @@ npm audit --omit=peer
 The automated suite covers gated tools, isolated sessions, quotas, replay prevention, failed and uncertain payments, HTTP behavior, and playground proof redaction. Tests use isolated fixtures and mock facilitator responses.
 
 A separate live acceptance run verified the browser flow: **0.01 testnet HBAR settled through Blocky402, real Graph tools enabled, a schema inspected, and five Uniswap swaps returned.** This confirms the integration path; availability and results still depend on the configured upstream services and selected deployment.
+
+### Gemini free-tier rate limits
+
+The playground uses `gemini-3.5-flash-lite` and spaces Gemini request starts by at least 4.5 seconds, leaving a margin below a 15-request-per-minute quota. The same limiter persists across runs in the single server process. Only one demo runs at a time, and waiting remains cancellable.
+
+Set `GEMINI_MODEL=gemini-3.5-flash-lite` in Railway and redeploy. No additional rate-limit variables are needed. There are no automatic retries or payment replays. If Gemini still returns a quota error, the run stops with a clear message and retains its existing results in the console. The original five-minute demo budget remains in place.
+
+This controls this app's request frequency; token quotas, daily quotas, and other applications sharing the Google project can still cause limits. See [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits).
+
+### Playground pipeline enforcement
+
+The demo now offers Gemini only the tools for its current stage: unlock, discovery, deployment activity, schema inspection, query, then answer. Query calls must use the same identifier and identifier type as a successfully inspected schema. Identical calls are blocked, activity counts remain advisory, and failed queries allow one correction before the answer stage. A successful data response (including an empty result) ends tool use. The final model turn is reserved for summarizing evidence or limitations instead of issuing more calls.
+
+The answer describes subgraph-reported data, not independently verified prices or freshness. Implausible TVL values should be flagged rather than triggering unbounded rediscovery. These demo controls are implemented in `src/demo-workflow.ts`; external MCP agents retain their normal paid tool access.
