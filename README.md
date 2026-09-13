@@ -1,137 +1,480 @@
 # IntentGraph
 
-Payment-gated access to **The Graph's hosted Subgraphs MCP**, with a React landing page and live SQLite-backed usage stats. The caller's agent does the reasoning. There is no internal LLM, resolver API, or caller-supplied Graph key.
+### From a question to on-chain data. One MCP connection.
 
-## Run locally
+**IntentGraph gives AI agents paid access to The Graph’s subgraphs through a verifiable Hedera payment flow.** Describe the data you need, let your agent unlock the toolkit, and follow the evidence from discovery to the final query result.
 
-Use Node.js **22.16+** (Node 22 LTS recommended).
+You do not need your own Graph API key. IntentGraph authenticates to The Graph on your behalf using the operator’s server-side key. Your agent brings the intent; The Graph provides indexed blockchain data; Hedera records the access payment.
+
+**Current release:** Hedera testnet payments in native HBAR, a working MCP endpoint, and an interactive Gemini playground.
+
+[Try the playground](#try-it-in-your-browser) · [Connect your agent](#connect-your-agent) · [Follow an example](#one-intent-through-the-entire-pipeline) · [Run locally](#run-your-own-instance)
+
+---
+
+## What you can do
+
+- **Ask for blockchain data in natural language.** Your agent translates the request into discovery, schema inspection, and GraphQL calls.
+- **Access The Graph without managing a Graph key.** The service operator supplies the upstream credentials.
+- **Pay for a bounded access session.** One confirmed payment unlocks the toolkit for the advertised duration and usage allowance.
+- **Inspect how an answer was produced.** The playground shows tool arguments, returned data, and a settlement receipt alongside the answer.
+- **Use your preferred agent.** Connect an MCP-compatible client, or try the hosted Gemini demonstration in your browser.
+
+IntentGraph is useful for developers exploring protocols, analysts inspecting indexed activity, and agent builders who need a clear path from a data request to paid tool access. Available data depends on the subgraphs discoverable through the upstream service, their schemas, and their indexing status.
+
+## Two ways to use IntentGraph
+
+| | Browser playground | Your own MCP agent |
+|---|---|---|
+| Where you start | A prompt box at `/playground` | Your agent’s chat or workflow |
+| Who reasons about your request | The operator-configured Gemini model | Your chosen agent |
+| Who pays for access | The operator’s shared demo wallet | Your agent’s Hedera testnet wallet |
+| Graph API key required from you | No | No |
+| Wallet setup required from you | No | Yes, including x402 signing support |
+| What you can inspect | Live console, raw data, answer, receipt | Tool results and receipt through your MCP client |
+
+The shared wallet sponsors **browser demonstrations only**. Connecting an external agent does not give it access to the demo wallet.
+
+## Try it in your browser
+
+1. Open the landing page and select **Playground**.
+2. Enter an intent, or choose one of the starting prompts.
+3. Select **Run the real flow**.
+4. Watch the pipeline advance through **Connect → Pay → Discover → Schema → Query → Answer**.
+5. Expand console entries to inspect the calls. Switch between **Answer** and **Raw data**, or open the payment receipt in HashScan.
+
+The playground uses real services: Gemini chooses tools, the shared wallet signs an x402 payment, Blocky402 settles it on Hedera testnet, and The Graph returns query results. Console filters separate tools, payments, and data; the trace download lets you review a run afterward.
+
+Your prompt and tool results are sent to Gemini. API keys, wallet private keys, and signed payment proofs stay on the server and are excluded from the public trace.
+
+### Sample intents
+
+| Intent | What the agent should investigate | Expected result shape |
+|---|---|---|
+| “Show the 5 latest Uniswap V3 swaps on Ethereum with amounts and token symbols.” | A matching deployment, its swap schema, token fields, and timestamps | A small swap list with clearly stated units |
+| “Find active Aave subgraphs on Ethereum and query a small sample of lending data.” | Candidate deployments, activity hints, and supported lending entities | A deployment choice and a bounded lending-data sample |
+| “Find Uniswap V3 pools on Ethereum and return the top 5 by TVL in USD, if the schema supports it.” | Pool fields, USD valuation fields, and available sort options | A ranked pool table, or an explanation of missing fields |
+| “Explore the schema of an Ethereum Uniswap subgraph and explain which swap fields I can query.” | Discovery and schema inspection | A description grounded in the returned schema |
+
+Be specific about the protocol, chain, version, time range, and result count. This helps the agent choose a relevant deployment and keep the response focused. A schema-only request can be useful without producing a GraphQL data query.
+
+## How The Graph and Hedera work together
+
+| Component | Role in your request |
+|---|---|
+| **Your agent / Gemini** | Interprets the intent, chooses tools, builds a query from the schema, and explains the returned data |
+| **IntentGraph** | Issues the access quote, enforces payment and session limits, and forwards authorized calls |
+| **The Graph Subgraphs MCP** | Exposes tools for subgraph discovery, deployment activity, schema inspection, and GraphQL execution |
+| **Hedera testnet** | Records the native HBAR transfer used to purchase access |
+| **x402 + Blocky402** | Defines the payment requirements and carries out verification and settlement of the signed payment |
+
+The payment network and the queried blockchain are independent. For example, you can pay in HBAR on **Hedera testnet** to query an **Ethereum** subgraph. The payment is for IntentGraph access; it does not move assets on the blockchain you are querying.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Agent as Your agent / Gemini
+    participant IG as IntentGraph MCP
+    participant Wallet as Payer wallet
+    participant F as Blocky402
+    participant H as Hedera testnet
+    participant G as The Graph Subgraphs MCP
+
+    User->>Agent: Describe the data needed
+    Agent->>IG: unlock_data_access({})
+    IG->>G: Discover actual tools with operator API key
+    IG->>F: Read payment capabilities
+    IG-->>Agent: Quote + amount + recipient + expiry
+    Agent->>Wallet: Request signature for exact quote
+    Wallet-->>Agent: Signed x402 payment proof
+    Agent->>IG: unlock_data_access(quote_id, payment_proof)
+    IG->>F: Verify, then settle
+    F->>H: Submit payment
+    H-->>F: Transaction outcome
+    F-->>IG: Successful settlement + receipt
+    IG-->>Agent: Enable data tools for this session
+    Agent->>IG: Discover → inspect schema → query
+    IG->>G: Forward calls with operator API key
+    G-->>Agent: Results through IntentGraph
+    Agent-->>User: Answer grounded in returned data
+```
+
+In the browser playground, the server handles the wallet-signing and proof-submission steps for Gemini. The model never receives the private key or signed proof.
+
+## One intent through the entire pipeline
+
+> **Example intent:** “Show the 5 latest Uniswap V3 swaps on Ethereum with amounts and token symbols.”
+>
+> The examples below are illustrative, shortened, and use placeholders. They are not live market data or copy-ready payment credentials. Discovery, activity, and schema outputs are shown as readable summaries rather than exact upstream response schemas. Actual identifiers, schemas, receipts, and values appear in your run’s console.
+
+### 1. Connect and request access
+
+**Your intent at this step:** Give the agent permission to discover the available data tools.
+
+A fresh MCP session initially exposes only `unlock_data_access`. The agent requests a quote:
+
+```json
+{
+  "name": "unlock_data_access",
+  "arguments": {}
+}
+```
+
+**Sample output — shortened quote:**
+
+```json
+{
+  "status": "payment_required",
+  "quote_id": "<quote UUID>",
+  "expires_at": "<quote expiry in UTC>",
+  "x402Version": 2,
+  "accepts": [{
+    "scheme": "exact",
+    "network": "hedera:testnet",
+    "amount": "1000000",
+    "asset": "0.0.0",
+    "payTo": "<operator receiving account>",
+    "maxTimeoutSeconds": 120,
+    "extra": { "feePayer": "<facilitator fee-payer account>" }
+  }],
+  "access": { "seconds": 3600, "queries": 100, "tool_calls": 500 }
+}
+```
+
+`1000000` tinybars equals **0.01 HBAR**. The quote specifies the recipient and access allowance before signing. IntentGraph first checks that it can discover the upstream tool schemas; this does not guarantee that every later data query will succeed.
+
+### 2. Sign the quoted payment
+
+**Your intent at this step:** Pay the exact advertised amount to unlock access.
+
+The wallet signs the quoted requirements locally. It does not independently submit the transfer. The agent then sends the signed proof back in the **same MCP session**:
+
+```json
+{
+  "name": "unlock_data_access",
+  "arguments": {
+    "quote_id": "<same quote UUID>",
+    "payment_proof": "<base64-encoded x402 v2 PaymentPayload>"
+  }
+}
+```
+
+**What you see in the playground:**
+
+```text
+x402 quote received
+Shared wallet signed
+unlock_data_access called with payment_proof: [REDACTED]
+```
+
+Browser visitors use the shared, faucet-funded demo wallet automatically. External agents need their own signing integration; a standard MCP connection alone does not supply a wallet.
+
+### 3. Settle and unlock the real tools
+
+**Your intent at this step:** Confirm payment before granting data access.
+
+IntentGraph checks the quote and replay protection, then asks Blocky402 to verify and settle the payment. Only a successful settlement enables the actual registered data tools using `.enable()`. Those handles begin disabled with `.disable()` and are disabled again when access expires or a limit is reached.
+
+**Sample output — shortened unlock result:**
+
+```json
+{
+  "status": "unlocked",
+  "settlement": {
+    "success": true,
+    "transaction": "<Hedera transaction ID>",
+    "network": "hedera:testnet"
+  },
+  "expires_at": "<access expiry in UTC>",
+  "tools": [
+    "search_subgraphs_by_keyword",
+    "get_deployment_30day_query_counts",
+    "get_schema_by_ipfs_hash",
+    "execute_query_by_ipfs_hash"
+  ]
+}
+```
+
+The tool list above is abbreviated. The client receives a tool-list update and can refresh `tools/list`. The playground displays the settlement receipt with a HashScan link. One visitor’s payment does not unlock another visitor’s session.
+
+### 4. Discover a relevant subgraph
+
+**Your intent at this step:** Find a deployment that matches Uniswap V3 on Ethereum.
+
+```json
+{
+  "name": "search_subgraphs_by_keyword",
+  "arguments": { "keyword": "Uniswap V3" }
+}
+```
+
+The agent uses returned IPFS hashes to check deployment activity:
+
+```json
+{
+  "name": "get_deployment_30day_query_counts",
+  "arguments": { "ipfs_hashes": ["<IPFS hash returned by search>"] }
+}
+```
+
+**Sample output — readable summary:**
+
+```text
+Candidate: a Uniswap V3 deployment matching Ethereum
+Identifier: <IPFS hash from the search response>
+Recent query activity: available as a ranking hint
+Next action: inspect this deployment's schema
+```
+
+Recent query volume helps compare candidates. A zero count does not prove a deployment is unavailable: the playground agent still attempts schema inspection and a small query before concluding that data cannot be retrieved.
+
+### 5. Inspect the schema before writing a query
+
+**Your intent at this step:** Learn which fields exist and what their values mean.
+
+```json
+{
+  "name": "get_schema_by_ipfs_hash",
+  "arguments": { "ipfs_hash": "<selected IPFS hash>" }
+}
+```
+
+**Sample output — readable summary:**
+
+```text
+Inspect the available swap entity and its fields.
+Identify timestamp, amount, and token relationships.
+Check token decimals and whether amounts use base units.
+Confirm supported ordering and result-limit arguments.
+```
+
+Schemas differ across subgraphs. The agent must use the returned schema instead of assuming a universal swap format. The same applies to USD values, liquidity metrics, lending positions, and other protocol-specific fields.
+
+### 6. Execute a bounded GraphQL query
+
+**Your intent at this step:** Retrieve five relevant records from the selected deployment.
+
+```json
+{
+  "name": "execute_query_by_ipfs_hash",
+  "arguments": {
+    "ipfs_hash": "<selected IPFS hash>",
+    "query": "<GraphQL query built from the inspected schema, limited to 5 swaps>"
+  }
+}
+```
+
+The query string is intentionally a placeholder: a runnable query must use the exact fields and ordering options discovered in step 5.
+
+**Sample output — illustrative data summary:**
+
+```text
+Records returned: 5 swaps
+Example record:
+  Timestamp: <timestamp returned by the subgraph>
+  Input token: USDC, decimals: 6
+  Input amount: 125000000 base units
+  Output token: WETH, decimals: 18
+  Output amount: 50000000000000000 base units
+```
+
+IntentGraph forwards the authorized call through The Graph’s Subgraphs MCP using the operator’s API key. The response comes from the selected subgraph. “Latest” is relative to that deployment’s indexed data and may lag the chain head.
+
+### 7. Return an answer you can inspect
+
+**Your intent at this step:** Understand the results without losing access to the underlying evidence.
+
+**Sample final output — using the illustrative record above:**
+
+```text
+The selected Ethereum subgraph returned five recent Uniswap V3 swaps.
+One swap exchanged 125 USDC for 0.05 WETH.
+
+Amounts were converted from base units using the returned token decimals.
+See Raw data for the source records and the console for the query.
+```
+
+If decimals are unavailable, amounts should be explicitly labeled as raw base units. If a tool fails or no usable data is found, the agent should explain the limitation rather than invent an answer. The playground distinguishes a response backed by a successful query from a response with no successful query yet.
+
+## What access includes
+
+These are the application defaults; always check the actual quote from the instance you use.
+
+| Access term | Default |
+|---|---|
+| Payment | 0.01 HBAR on Hedera testnet |
+| Quote validity | 2 minutes |
+| Access duration | 60 minutes |
+| GraphQL allowance | Up to 100 query attempts |
+| Total tool allowance | Up to 500 data-tool calls |
+| Scope | The MCP session that paid |
+
+The fee is set by the IntentGraph operator and is not The Graph’s underlying query price. It purchases access, not a guaranteed answer. Dispatched upstream failures consume an attempt; invalid tool arguments do not. There are no automatic refunds.
+
+Keep your MCP session ID. Terminating the session, losing its ID, or restarting the server ends access. If settlement is reported as uncertain, **do not submit another payment automatically**; retain the quote ID and contact the operator for reconciliation.
+
+The browser demo has an additional shared budget: by default, 30 attempted runs per UTC day, one active run at a time, and at most one payment attempt per run. Each run has bounded model turns, tool calls, context size, and execution time. Stopping a run stops further work, while a payment already submitted is allowed to finish safely.
+
+## Connect your agent
+
+Use the instance’s `/mcp` endpoint. Replace `https://YOUR_HOST` with the deployed service URL. For a default local installation, use `http://localhost:3000`; the existing development instance may use a configured alternative port.
+
+### Cursor
+
+Add to `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "intentgraph": { "url": "https://YOUR_HOST/mcp" }
+  }
+}
+```
+
+### Claude Desktop
+
+With Node.js installed, add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "intentgraph": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://YOUR_HOST/mcp"]
+    }
+  }
+}
+```
+
+### VS Code
+
+Add to `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "intentgraph": { "type": "http", "url": "https://YOUR_HOST/mcp" }
+  }
+}
+```
+
+Your client must preserve `Mcp-Session-Id` and support tool-list changes, or refresh `tools/list` after unlocking. The payment request is returned inside `unlock_data_access`, so MCP initialization remains available before payment.
+
+### Bring a payment-capable wallet
+
+External agents sign the quote with an x402-compatible Hedera testnet wallet. The repository includes a local helper:
+
+1. Save the inner JSON quote from `unlock_data_access` as `quote.json`.
+2. On the payer’s machine, configure `PAYER_ACCOUNT_ID`, `PAYER_PRIVATE_KEY`, `EXPECTED_PAY_TO`, and `MAX_PAYMENT_TINYBARS` in the wallet environment.
+3. Run `npm run pay -- quote.json`.
+4. Submit the resulting `{quote_id, payment_proof}` to `unlock_data_access` in the original session.
+
+The helper checks expiry, recipient, amount ceiling, native HBAR, and testnet before signing. Never send a private key to an MCP tool. The operator-local `npm run mcp:stdio` entrypoint is also available; it is not a way to distribute the operator’s credentials to customers.
+
+## Live activity and receipts
+
+The landing page reports actual recorded activity:
+
+- Settled payments and HBAR volume.
+- Query attempts and successful query calls.
+- Total tool calls and active paid HTTP sessions.
+- Recent tool activity and seven days of query counts.
+
+These counters come from the application’s persistent SQLite ledger through `/api/stats`, refreshed every ten seconds. They are not seeded demonstration numbers. Failed, pending, and uncertain settlements are excluded from the settled-payment count. A successful query counter reflects a successful tool response, not a guarantee of complete or current data.
+
+Public statistics do not expose API keys, payment proofs, session IDs, payer IDs, or query text. The playground separately shows the shared demo wallet’s public address and balance, along with the receipt for your run.
+
+## Run your own instance
+
+### Prerequisites
+
+- Node.js **22.16 or newer**.
+- An operator Graph Gateway API key.
+- A Hedera testnet account to receive payments.
+- For the browser playground: a Gemini API key and a funded shared testnet wallet.
+
+### Install and configure
 
 ```sh
 npm ci
 cp .env.example .env
-# Edit .env with your operator configuration.
+```
+
+On PowerShell, use `Copy-Item .env.example .env`. Do not overwrite an existing configured `.env`.
+
+| Setting | What to configure |
+|---|---|
+| `GATEWAY_API_KEY` | Operator key for The Graph; never shared with visitors |
+| `HEDERA_SELLER_ACCOUNT_ID` | Hedera testnet receiving account |
+| `GEMINI_API_KEY` | Server-side key for the browser demonstration |
+| `GEMINI_MODEL` | Demo model; defaults to `gemini-2.5-flash` |
+| `PUBLIC_URL` | Public base URL used in client installation snippets |
+| `PORT` | Server port; defaults to `3000` |
+| `ALLOWED_ORIGINS` | Allowed browser origins, including your actual site origin |
+| `DATA_DIR` | Persistent directory for the ledger and shared wallet |
+| `DEMO_DAILY_RUN_LIMIT` | Shared daily demo allowance; defaults to `30` |
+| `DEMO_ENABLED` | Set to `false` to disable the browser demo |
+
+See [.env.example](.env.example) for access-duration, query, tool-call, facilitator, and transport settings. Receiving payments does not require the seller’s private key. The separate demo payer wallet does require its own locally stored signing key.
+
+### Fund the shared demo wallet
+
+```sh
+npm run wallet:setup
+```
+
+Fund the printed EVM address using the Hedera testnet faucet, complete its CAPTCHA, then activate the account:
+
+```sh
+npm run wallet:setup -- --activate
+```
+
+The wallet persists in `DATA_DIR/demo-wallet.json`, excluded from Git and public web assets. Activation completes the faucet-created account with a self-paid transaction transferring one tinybar to the configured receiving account. An optional `HEDERA_PAT` supports `npm run wallet:setup -- --fund --activate` through the faucet API.
+
+Keep this file private and back it up securely. All browser demo visitors use the same funded wallet; their MCP access sessions remain separate.
+
+### Start the application
+
+```sh
 npm run build
 npm start
 ```
 
-PowerShell: use `Copy-Item .env.example .env` in place of `cp`. If the PowerShell npm wrapper is broken, invoke `npm.cmd`.
-
-The website is at `http://localhost:3000`; the MCP endpoint is `http://localhost:3000/mcp`. The site and its real zero-state statistics work without credentials; paid MCP connections return 503 until both operator settings are supplied. The development preview created during implementation uses **http://localhost:3107** to avoid another local application on port 3000.
-
-Required operator settings:
-
-| Setting | Purpose |
+| Route | Purpose |
 |---|---|
-| `GATEWAY_API_KEY` | Your Graph Studio Gateway key; only the server uses it |
-| `HEDERA_SELLER_ACCOUNT_ID` | Your Hedera testnet receiving account, e.g. `0.0.123456` |
-| `PUBLIC_URL` | Browser-visible base URL, with no trailing slash; used in installation snippets |
-| `ALLOWED_ORIGINS` | Comma-separated allowed browser origins |
+| `/` | Landing page, live activity, and connection instructions |
+| `/playground` | Interactive Gemini demonstration |
+| `/mcp` | Streamable HTTP MCP endpoint |
+| `/api/stats` | Public usage statistics |
+| `/api/playground/status` | Demo availability and public wallet status |
 
-Do not put your Graph key in client configs, frontend environment variables, Git, or browser storage. The operator does **not** need a Hedera private key to receive payments. Wallet private keys belong only to the paying agent's wallet environment.
+For development, run `npm run dev` and `npm run dev:web` in separate terminals. Vite proxies `/api` to port 3000 by default; update its proxy when using another backend port. Run all commands from the repository root.
 
-For development, run `npm run dev` and `npm run dev:web` in separate terminals. Vite proxies `/api` to the backend on port 3000. Update the Vite proxy if you change that port. Run commands from this repository's root.
+### Deployment essentials
 
-## Connect an agent
-
-The landing page has working copyable configurations for Claude Desktop, Cursor, VS Code, and generic MCP clients. Remote users only need your HTTPS MCP endpoint and a Hedera payment-capable wallet; they do **not** need a Graph key.
-
-Cursor (`.cursor/mcp.json`):
-
-```json
-{"mcpServers":{"intentgraph":{"url":"https://YOUR_HOST/mcp"}}}
-```
-
-Claude Desktop (`claude_desktop_config.json`, Node.js required):
-
-```json
-{"mcpServers":{"intentgraph":{"command":"npx","args":["-y","mcp-remote","https://YOUR_HOST/mcp"]}}}
-```
-
-VS Code (`.vscode/mcp.json`):
-
-```json
-{"servers":{"intentgraph":{"type":"http","url":"https://YOUR_HOST/mcp"}}}
-```
-
-The endpoint is local until you deploy it. Other machines cannot connect to your `localhost` URL. MCP hosts must support dynamic tool-list updates, or explicitly refresh `tools/list` after payment.
-
-## Payment flow
-
-1. Initialize MCP. Preserve `Mcp-Session-Id` across all requests.
-2. `tools/list` returns only `unlock_data_access`.
-3. Call `unlock_data_access({})`. IntentGraph connects to The Graph using the operator key, discovers the **actual upstream tool schemas**, registers and disables their handles, and obtains current facilitator capabilities. An unavailable upstream fails before offering payment.
-4. Receive `status: payment_required`, `quote_id`, `expires_at`, and an x402 v2 `accepts` array. The quote is valid for two minutes. HBAR amounts are integer **tinybars** (100,000,000 = 1 HBAR). The fee payer comes from Blocky402 `/supported`, never a hard-coded account.
-5. Your wallet signs `accepts[0]` using `@x402/hedera`. It does not submit the transfer itself. Standard MCP clients do not automatically provide this wallet capability.
-6. Call `unlock_data_access({quote_id, payment_proof})` **in the same MCP session**. The proof is base64 of the complete x402 v2 PaymentPayload, including `x402Version`, `accepted`, and `payload.transaction`.
-7. The server validates the quote match, checks the canonical Hedera transaction ID for replay, calls `/verify`, durably claims the transaction, then calls `/settle`. It requires `success: true`, a transaction receipt, and the expected network. Only then does it persist settlement and call `.enable()` on the actual tools. SDK tool-list notifications are emitted automatically.
-8. Refresh the tools. Search → verify deployment activity → inspect schema → execute GraphQL. Read `graphql://subgraph` for workflow instructions and, after unlocking, the upstream guidance.
-
-The payment-required signal is **inside the MCP tool result**, not a blanket HTTP 402 on every protocol request. This preserves initialization, discovery, and transport behavior.
-
-Default access: **0.01 test HBAR**, **60 minutes**, up to **100 query attempts / 500 total tool calls**. All tools start disabled. Expiration or either quota disables the handles again. Only one data call per session runs at a time; concurrent unlocks return a retryable busy result. Invalid tool arguments do not consume quota; dispatched upstream errors do. These are configurable operator access fees, not the underlying Graph's prices.
-
-Payment buys access rather than a guaranteed result. Sessions are ephemeral; explicit termination, server restart, or loss of a session ID ends access. No automatic refunds are issued. A lost network connection can reconnect using the same retained session ID while it remains active. This policy is also shown before payment on the site and in the MCP instructions.
-
-### Wallet helper
-
-Save the **inner JSON quote** returned by the tool as `quote.json`. On the **payer's machine**, set `PAYER_ACCOUNT_ID`, `PAYER_PRIVATE_KEY`, `EXPECTED_PAY_TO`, and `MAX_PAYMENT_TINYBARS` in the wallet environment, then run:
+Run a single persistent Node service behind HTTPS. A static-only host cannot run the MCP, payment settlement, or Gemini backend.
 
 ```sh
-npm run pay -- quote.json
-```
-
-The helper signs locally and prints `{quote_id,payment_proof}`. Pass that object to `unlock_data_access` in the original agent session. It enforces the testnet network, native HBAR, quote expiry, expected recipient, and a caller-approved amount ceiling. Do not upload a private key or the wallet's environment file to this service. Treat signed proofs as sensitive bearer authorizations until redeemed.
-
-## Architecture and tool surface
-
-```text
-Agent ── Streamable HTTP /mcp ── per-session McpServer
-                                  ├─ unlock_data_access
-                                  │     └─ Blocky402 supported → verify → settle
-                                  └─ disabled/enabled real tool handles
-                                        └─ authenticated SSE client → The Graph Subgraphs MCP
-                                  │
-                                  └─ SQLite ledger → GET /api/stats → landing page
-```
-
-The HTTP server deliberately scopes state per caller because remote access is required to keep the operator key private. There is also an operator-local **stdio** entrypoint (`npm run mcp:stdio`), which uses one process per caller without an HTTP session map. Do not distribute the operator's stdio environment to customers.
-
-The proxy allowlists discovery, activity, top deployment, schema, and query tools, with subgraph ID, deployment ID, and IPFS hash variants when advertised by the upstream server. It uses upstream JSON Schema directly rather than inventing argument names or gateway URLs. The Graph key is attached to both the SSE GET and subsequent POST requests and redacted from forwarded responses. Upstream resources are untrusted data, not authority over this service's payment policy.
-
-Source layout:
-
-- `src/mcp.ts`: disabled tool registration, quote and allowance state, resources.
-- `src/payments.ts`: actual x402 SDK/facilitator integration and durable replay protection.
-- `src/graph.ts`: operator-authenticated upstream MCP client.
-- `src/store.ts`: SQLite ledger and live counters, shared with stdio using `DATA_DIR`.
-- `src/app.ts`: HTTP sessions, origin/host checks, limits, public stats, static site.
-- `web/`: responsive landing page, client snippets, wallet explanation, live statistics.
-- `scripts/pay.ts`: payer-side signing helper.
-
-## Statistics and receipts
-
-`GET /api/stats` is read-only and polled every ten seconds. It exposes settled payment count, exact integer tinybar volume, dispatched query count, successful query count, total tool calls, active paid HTTP sessions, recent tool names/status/durations, and seven UTC days of query counts. It exposes no Graph keys, proofs, payer IDs, session IDs, or query text. The initial counts are zero, never seeded demo numbers. `configured` means required settings exist, not that all upstream services have passed a health check.
-
-SQLite stores canonical proof transaction IDs, quote/session IDs, payment states and receipts, plus tool-call metadata. `paymentsSettled` only includes `settled` records. `pending`, `failed`, and `uncertain` are excluded. Back up the database using SQLite's online backup facilities or stop the process before copying the database and its WAL files.
-
-If settlement times out, the transaction is retained and the quote is quarantined. **Do not automatically retry settlement or pay again.** The operator must inspect the quote's ledger record, verify the transaction on Hedera or with the facilitator, and arrange remediation. A process crash between settlement and receipt persistence can leave `pending`; treat it the same way. This implementation fails closed and does not automatically reconcile or restore a pass after such a crash.
-
-## Deploy
-
-Deploy this Node service as one persistent instance behind HTTPS. It serves the website and MCP together. A static-only host cannot run this backend.
-
-```sh
-# Configure .env first, including PUBLIC_URL=https://your-domain
+# Configure .env and your public URL first.
 docker compose up --build -d
 ```
 
-The included Docker setup runs as a non-root user, binds host port 3000 to loopback, and uses a durable named volume. Put a reverse proxy on your domain in front of port 3000. Preserve the public Host header and `Mcp-Session-Id`, `MCP-Protocol-Version`, `Last-Event-ID`, and Accept headers. Disable response buffering for SSE and allow long-lived GET connections. Add the website origin to `ALLOWED_ORIGINS`. Do not cache `/mcp` or `/api/stats`.
+Use persistent local storage outside cloud-sync folders. Preserve MCP session headers through the reverse proxy, allow long-lived connections, and disable buffering and caching for MCP and playground streams. Include the public origin in `ALLOWED_ORIGINS`. The provided Docker configuration uses a non-root process and a persistent volume; it has not been validated by running Docker in this Windows environment.
 
-`HOST=0.0.0.0` is necessary inside a container. For local use the default is loopback. Set `MAX_SESSIONS` and the query/call/time limits to fit your Graph budget. The HTTP limiter is intentionally conservative and does not trust forwarded IP headers; behind a proxy it limits the shared proxy address. Configure an edge limiter if you need per-client limits. Don't simply enable unrestricted `trust proxy`.
+The application does not trust forwarded IP headers by default. Configure edge rate limiting for a public deployment. Multiple replicas require a redesigned shared ledger/session strategy; the current demo wallet and concurrency controls assume a single instance.
 
-Run a single replica with local persistent storage. Horizontally distributed workers require sticky sessions plus a shared transactional ledger, or a redesigned durable session store. Do not place the database on a cloud-sync/network filesystem for production.
+## Implementation and verification
 
-## Verification
+| Area | Source |
+|---|---|
+| Gated tool registration and session allowances | [src/mcp.ts](src/mcp.ts) |
+| Operator-authenticated Graph connection | [src/graph.ts](src/graph.ts) |
+| x402 verification, settlement, and replay protection | [src/payments.ts](src/payments.ts) |
+| Gemini tool loop and streamed run events | [src/playground.ts](src/playground.ts), [src/gemini.ts](src/gemini.ts) |
+| Shared testnet wallet | [src/demo-wallet.ts](src/demo-wallet.ts) |
+| Persistent payments and usage | [src/store.ts](src/store.ts) |
+| HTTP API and session isolation | [src/app.ts](src/app.ts) |
+| Landing page and playground | [web/](web/) |
 
 ```sh
 npm run check
@@ -140,36 +483,6 @@ npm run build
 npm audit --omit=peer
 ```
 
-Tests use in-memory MCP clients, a real local HTTP transport, actual locally serialized Hedera test transactions, and **mock facilitator responses**. They do not move money or call the live Graph gateway. They cover hidden tools, direct-call rejection, schema validation, independent sessions, quotas, duplicate/cross-process proof replay, failed/uncertain settlement, concurrency, HTTP cleanup, and public statistics.
+The automated suite covers gated tools, isolated sessions, quotas, replay prevention, failed and uncertain payments, HTTP behavior, and playground proof redaction. Tests use isolated fixtures and mock facilitator responses.
 
-The Blocky402 testnet `/supported` endpoint was checked during implementation. The Gemini playground was also verified live: the shared testnet wallet settled 0.01 HBAR through Blocky402, enabled the Graph tools, inspected a schema, and returned five Uniswap swaps. Automated tests remain isolated from live services. Docker packaging is supplied but has not been run in this Windows environment.
-
-Dependencies include scoped overrides for patched protobuf, gRPC, and WebSocket libraries pulled in by the Hedera SDK; preserve the lockfile and retest signing when updating them. Unused React Native peer tooling is omitted through `.npmrc`.
-
-References: [The Graph Subgraphs MCP](https://thegraph.com/docs/en/subgraphs/tooling/subgraph-mcp/introduction/), [GraphOps source](https://github.com/graphops/subgraph-mcp), [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk), [x402 source](https://github.com/x402-foundation/x402), [Blocky402 capabilities](https://api.testnet.blocky402.com/supported).
-
-## Live Gemini playground
-
-Open `/playground` from the landing page. The browser streams a real Gemini agent run through a fresh local MCP HTTP connection: quote, shared-wallet signature, Blocky402 settlement, newly enabled Graph tools, discovery, schema inspection, GraphQL data, and a grounded answer. Expand console entries to inspect arguments and responses, filter tools/payments/data, download a redacted trace, or switch the result to raw data. Landing-page counters include these actual settlements and queries.
-
-Set `GEMINI_API_KEY` in the server `.env`. `GEMINI_MODEL` defaults to `gemini-2.5-flash`. Neither Gemini nor Graph keys are sent to the browser. External MCP users continue to use their own agent without requiring a Graph key; Gemini is only the optional website demonstration client.
-
-### Shared testnet wallet
-
-```sh
-npm run wallet:setup
-# Fund the printed EVM address at https://portal.hedera.com/faucet.
-# Complete the faucet CAPTCHA yourself, then activate the funded account:
-npm run wallet:setup -- --activate
-```
-
-The generated ECDSA key persists in `DATA_DIR/demo-wallet.json`, excluded from Git and web assets. The faucet creates the Hedera account; activation signs a self-paid transaction transferring one tinybar to the configured receiving account. All visitors share this funded account, while each run has its own gated MCP session. No visitor wallet connection is needed. An optional operator `HEDERA_PAT` enables `npm run wallet:setup -- --fund --activate` using Hedera's official faucet API. Funding is an operator setup action, never a public website endpoint.
-
-Keep the wallet file private and back it up securely. Production should use a local persistent volume with restrictive OS permissions, outside cloud-synced folders. The public status endpoint exposes only its address, account ID and balance. The demo signer accepts only the configured exact native HBAR amount, configured recipient, and Hedera testnet. Signed payment proofs remain on the server and are redacted from traces.
-
-The default shared budget is 30 attempted runs per UTC day (`DEMO_DAILY_RUN_LIMIT`), persisted in SQLite. One demo runs at a time. Each run allows at most one payment attempt, 14 model turns (`DEMO_MAX_STEPS`), 24 model tool calls and five minutes, with bounded prompt/result sizes. Failed attempts count toward the daily quota. The HTTP route also limits each source to six requests per ten minutes. Set `DEMO_ENABLED=false` to disable the demo. The configured limits bound shared API use; visitors cannot provide wallet, model, recipient, price or MCP URL overrides.
-
-Stopping a run disconnects the viewer and stops subsequent model work. A payment already submitted is allowed to finish before the session closes, so its receipt is recorded safely. Settlement uncertainty remains fail-closed. A run may pay and still fail to find usable data; the UI reports that honestly. Query-count discovery metrics are only ranking hints, so a zero count still permits schema inspection and an actual query attempt.
-
-For deployment, disable reverse-proxy buffering and caching on `/api/playground/run`, support streamed responses lasting several minutes, and keep `/api/playground/status` uncached. This shared-wallet implementation runs as a single application instance.
-
+A separate live acceptance run verified the browser flow: **0.01 testnet HBAR settled through Blocky402, real Graph tools enabled, a schema inspected, and five Uniswap swaps returned.** This confirms the integration path; availability and results still depend on the configured upstream services and selected deployment.
