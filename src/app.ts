@@ -10,6 +10,8 @@ import type { Graph } from './graph.js';
 import type { Payments } from './payments.js';
 import type { Store } from './store.js';
 import { buildSession } from './mcp.js';
+import { Playground } from './playground.js';
+import { z } from 'zod';
 
 export function createApp(config: Config, graph: Graph, payments: Payments, store: Store) {
   const app = express();
@@ -17,6 +19,7 @@ export function createApp(config: Config, graph: Graph, payments: Payments, stor
   const sessions = new Map<string, { session: ReturnType<typeof buildSession>; transport: StreamableHTTPServerTransport; touched: number }>();
   const allSessions = new Set<ReturnType<typeof buildSession>>();
   let shuttingDown = false;
+  const playground = new Playground(config, store);
   const origins = new Set(config.ALLOWED_ORIGINS.split(',').map(s => s.trim()));
   const publicHost = new URL(config.PUBLIC_URL).host;
   app.disable('x-powered-by');
@@ -44,6 +47,24 @@ export function createApp(config: Config, graph: Graph, payments: Payments, stor
   });
   app.get('/api/config', (_req, res) => res.json({ mcpUrl: `${config.PUBLIC_URL}/mcp`, network: 'hedera:testnet', transport: 'streamable-http' }));
   app.get('/api/health', (_req, res) => res.json({ status: 'ok', paymentsConfigured: ready }));
+  app.get('/api/playground/status', rateLimit({ windowMs: 60000, limit: 60 }), async (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try { res.json(await playground.status()); } catch { res.status(503).json({ ready: false, message: 'Playground status unavailable.' }); }
+  });
+  app.post('/api/playground/run', rateLimit({ windowMs: 600000, limit: 6 }), async (req, res) => {
+    if (shuttingDown) return res.status(503).json({ error: 'Server is shutting down.' });
+    const parsed = z.object({ prompt: z.string().trim().min(8).max(1500) }).strict().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Enter an on-chain data request between 8 and 1500 characters.' });
+    const controller = new AbortController();
+    res.status(200).set({ 'Content-Type': 'application/x-ndjson', 'Cache-Control': 'no-store, no-transform', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    res.on('close', () => controller.abort());
+    const emit = (event: unknown) => { if (!res.destroyed) res.write(JSON.stringify(event) + '\n'); };
+    const heartbeat = setInterval(() => emit({ type: 'heartbeat', at: new Date().toISOString() }), 15000);
+    try { await playground.run(parsed.data.prompt, emit, controller.signal); }
+    catch { emit({ type: 'error', at: new Date().toISOString(), message: 'The playground is busy or not configured. Check its status and try again.' }); emit({ type: 'done', at: new Date().toISOString(), status: 'failed' }); }
+    finally { clearInterval(heartbeat); res.end(); }
+  });
   app.all('/mcp', async (req, res) => {
     if (shuttingDown) return res.status(503).json({ error: 'Server is shutting down.' });
     if (!['GET', 'POST', 'DELETE'].includes(req.method)) return res.status(405).set('Allow', 'GET, POST, DELETE').end();
@@ -72,6 +93,7 @@ export function createApp(config: Config, graph: Graph, payments: Payments, stor
   });
   app.use(express.static(resolve('web-dist')));
   app.get('/', (_req, res) => res.sendFile(resolve('web-dist/index.html')));
+  app.get('/playground', (_req, res) => res.sendFile(resolve('web-dist/index.html')));
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     const status = typeof error === 'object' && error && 'status' in error ? Number(error.status) : 500;
     res.status(status >= 400 && status < 600 ? status : 500).json({ error: 'Request could not be processed.' });
@@ -83,5 +105,5 @@ export function createApp(config: Config, graph: Graph, payments: Payments, stor
       }
     }
   }, 60000); sweep.unref();
-  return { app, close: async () => { shuttingDown = true; clearInterval(sweep); await Promise.all([...allSessions].map(s => s.dispose())); await graph.close(); } };
+  return { app, close: async () => { shuttingDown = true; clearInterval(sweep); await playground.close(); await Promise.all([...allSessions].map(s => s.dispose())); await graph.close(); } };
 }

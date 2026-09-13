@@ -7,6 +7,7 @@ import '@fontsource/instrument-serif/400-italic.css';
 import '@fontsource/instrument-sans/400.css';
 import '@fontsource/instrument-sans/500.css';
 import '@fontsource/jetbrains-mono/400.css';
+import Playground from './Playground';
 
 type Stats = { paymentsSettled: number; queriesMade: number; queriesSucceeded: number; toolCalls: number; volumeTinybars: string; activeSessions: number; updatedAt: string; service: string; priceTinybars: string; accessSeconds: number; queryLimit: number; toolCallLimit: number; recent: { tool: string; success: number; durationMs: number; createdAt: string }[]; daily: { day: string; queries: number }[] };
 const hbar = (tiny: string) => { const n = BigInt(tiny); return `${n / 100000000n}.${(n % 100000000n).toString().padStart(8, '0')}`.replace(/\.?0+$/, ''); };
@@ -95,4 +96,4 @@ function App() {
     </main><footer className="container"><a className="brand" href="#"><Mark/>IntentGraph</a><span>Intent in. Intelligence out.</span><a href="#developers">Connect your agent <ArrowUpRight size={14}/></a><div className="footer-bottom"><span>© {new Date().getFullYear()} IntentGraph</span><span>Powered by The Graph · Settled on Hedera</span><span className="mono">TESTNET BETA</span></div></footer>
   </>;
 }
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
+createRoot(document.getElementById('root')!).render(<React.StrictMode>{window.location.pathname === '/playground' ? <Playground/> : <App/>}</React.StrictMode>);

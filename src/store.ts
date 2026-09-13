@@ -19,6 +19,7 @@ export class Store {
         success INTEGER NOT NULL, duration_ms INTEGER NOT NULL, created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS calls_created ON calls(created_at);
+      CREATE TABLE IF NOT EXISTS demo_runs (id TEXT PRIMARY KEY, day TEXT NOT NULL, status TEXT NOT NULL);
     `);
   }
   claim(proofId: string, sessionId: string, quoteId: string, amount: string) {
@@ -51,4 +52,14 @@ export class Store {
     return { toolCalls: Number(totals.toolCalls), queriesMade: Number(totals.queriesMade), queriesSucceeded: Number(totals.queriesSucceeded), paymentsSettled: payments.length, volumeTinybars: tinybars.toString(), recent, daily, updatedAt: new Date().toISOString() };
   }
   close() { this.db.close(); }
+  demoRunsToday() { return Number(this.db.prepare('SELECT COUNT(*) AS n FROM demo_runs WHERE day=?').get(new Date().toISOString().slice(0,10))!.n); }
+  reserveDemoRun(id: string, limit: number) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      if (this.demoRunsToday() >= limit) { this.db.exec('ROLLBACK'); return false; }
+      this.db.prepare('INSERT INTO demo_runs VALUES(?,?,?)').run(id, new Date().toISOString().slice(0,10), 'running');
+      this.db.exec('COMMIT'); return true;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  finishDemoRun(id: string, status: string) { this.db.prepare('UPDATE demo_runs SET status=? WHERE id=?').run(status, id); }
 }
