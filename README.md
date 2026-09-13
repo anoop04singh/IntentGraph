@@ -1,5 +1,7 @@
 # IntentGraph
 
+<img width="4000" height="1250" alt="intentGraphWordmark" src="https://github.com/user-attachments/assets/59562a44-e101-4ba0-a947-edf931866f4a" />
+
 ### From a question to on-chain data. One MCP connection.
 
 **IntentGraph gives AI agents paid access to The Graph’s subgraphs through a verifiable Hedera payment flow.** Describe the data you need, let your agent unlock the toolkit, and follow the evidence from discovery to the final query result.
