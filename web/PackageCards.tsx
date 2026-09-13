@@ -1,0 +1,5 @@
+export type AccessPackage = { id: string; name: string; amount: string; seconds: number; queries: number; tool_calls: number; quoteSeconds: number; description: string };
+export function packageHbar(value: string) { return (Number(value) / 100000000).toLocaleString('en-US', { maximumFractionDigits: 8 }); }
+export default function PackageCards({ packages, selected }: { packages?: AccessPackage[]; selected?: string }) {
+  return <div className="access-packages" aria-label="Time-based access packages">{packages?.map(p=><article key={p.id} className={selected===p.id?'selected':''}><div className="package-top"><strong>{p.name}</strong><span>{selected===p.id?'AGENT SELECTED':`${p.seconds / 60} MIN ACCESS`}</span></div><p className="package-price">{packageHbar(p.amount)} <small>HBAR</small></p><p>{p.description}</p><div className="package-detail">{p.seconds / 60} min · {p.queries} queries · {p.tool_calls} tool calls</div><div className="package-detail">Quote valid for {p.quoteSeconds}s</div></article>) ?? <p>Loading access packages…</p>}</div>;
+}

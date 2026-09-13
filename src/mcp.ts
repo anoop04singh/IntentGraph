@@ -4,6 +4,7 @@ import type { Config } from './config.js';
 import type { Graph } from './graph.js';
 import { newQuote, PaymentError, type Payments, type Quote } from './payments.js';
 import type { Store } from './store.js';
+import { accessPackage, accessPackages, packageIds } from './pricing.js';
 
 export const workflow = `Call unlock_data_access without a proof to get an x402 v2 quote. Have your Hedera wallet sign its exact requirements, then call unlock_data_access with quote_id and base64 payment_proof in THIS MCP session. Never request or supply a Graph API key. After successful settlement, refresh tools/list if your host does not handle notifications/tools/list_changed. Search by protocol, verify candidate deployment activity with get_deployment_30day_query_counts, inspect the selected schema, then execute GraphQL. Clarify chain/version when ambiguous. Read graphql://subgraph for upstream instructions. The calling agent performs all reasoning; there is no internal LLM. Payment buys time-limited toolkit access with disclosed usage limits, not a guaranteed data result. Upstream errors consume an attempt; no automatic refunds. Do not retry payment after an uncertain settlement.`;
 const reply = (value: Record<string, unknown>, isError = false) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], isError });
@@ -13,6 +14,7 @@ export function buildSession(id: string, config: Config, graph: Graph, payments:
   const tools = new Map<string, RegisteredTool>();
   let quote: Quote | undefined;
   let expiresAt = 0;
+  let allowance = accessPackage(config);
   let calls = 0;
   let queries = 0;
   let busy = false;
@@ -21,7 +23,7 @@ export function buildSession(id: string, config: Config, graph: Graph, payments:
   let disposing: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const lock = () => { expiresAt = 0; tools.forEach(tool => tool.disable()); };
-  const active = () => !disposed && expiresAt > Date.now() && calls < config.TOOL_CALL_LIMIT && queries < config.QUERY_LIMIT;
+  const active = () => !disposed && expiresAt > Date.now() && calls < allowance.tool_calls && queries < allowance.queries;
 
   async function registerRealTools() {
     if (tools.size) return;
@@ -57,35 +59,37 @@ export function buildSession(id: string, config: Config, graph: Graph, payments:
     }
   }
   server.registerTool('unlock_data_access', {
-    description: 'Get a quote, then submit a signed x402 Hedera testnet payment to unlock The Graph tools. No Graph API key required. Keep the same MCP session.',
+    description: 'Choose an access package and get a quote, then submit its signed x402 HBAR proof in the same session. Packages: ' + JSON.stringify(accessPackages(config)),
     inputSchema: {
+      package_id: z.enum(packageIds).optional().describe('Choose quick for a focused lookup, explore for broader research, standard for extended access. Omission defaults to standard.'),
       quote_id: z.string().uuid().optional(),
       payment_proof: z.string().min(1).max(64000).optional().describe('Base64-encoded x402 v2 PaymentPayload from your wallet. Never send a private key.'),
     },
-  }, async ({ quote_id, payment_proof }) => {
+  }, async ({ quote_id, payment_proof, package_id }) => {
     if (disposed) return reply({ status: 'session_closed', message: 'Initialize a new MCP session.' }, true);
-    if (active()) return reply({ status: 'unlocked', expires_at: new Date(expiresAt).toISOString(), queries_remaining: config.QUERY_LIMIT - queries, calls_remaining: config.TOOL_CALL_LIMIT - calls, tools: [...tools.keys()] });
+    if (active()) return reply({ status: 'unlocked', expires_at: new Date(expiresAt).toISOString(), package: allowance, queries_remaining: allowance.queries - queries, calls_remaining: allowance.tool_calls - calls, tools: [...tools.keys()] });
     if (busy) return reply({ status: 'busy', message: 'An unlock request is already running. Wait before retrying.' }, true);
     busy = true;
     try {
       if (quote?.uncertain) return reply({ status: 'settlement_uncertain', quote_id: quote.id, message: 'Do not pay again. Contact the operator for reconciliation.' }, true);
       if (!payment_proof) {
         await registerRealTools(); // Confirm upstream/schema availability before offering payment.
-        if (!quote || quote.consumed || Date.now() >= quote.expiresAt) quote = newQuote(await payments.requirements());
+        const selected = accessPackage(config, package_id ?? quote?.access?.id);
+        if (!quote || quote.consumed || Date.now() >= quote.expiresAt || quote.access?.id !== selected.id) quote = newQuote(await payments.requirements(selected.id), selected);
         return reply({ status: 'payment_required', quote_id: quote.id, expires_at: new Date(quote.expiresAt).toISOString(),
           x402Version: 2, resource: { url: `${config.PUBLIC_URL}/mcp`, description: 'IntentGraph toolkit access', mimeType: 'application/json' },
-          accepts: [quote.requirements], access: { seconds: config.ACCESS_SECONDS, queries: config.QUERY_LIMIT, tool_calls: config.TOOL_CALL_LIMIT },
+          accepts: [quote.requirements], package: quote.access, access: { seconds: quote.access!.seconds, queries: quote.access!.queries, tool_calls: quote.access!.tool_calls },
           instructions: 'Sign accepts[0] with an x402 Hedera wallet, then submit quote_id and base64 payment_proof in this same MCP session.' });
       }
-      if (!quote || quote.id !== quote_id || quote.consumed || Date.now() >= quote.expiresAt) return reply({ status: 'quote_invalid', message: 'Request a fresh quote in this session before signing.' }, true);
+      if (!quote || quote.id !== quote_id || quote.consumed || Date.now() >= quote.expiresAt || (package_id && package_id !== quote.access?.id)) return reply({ status: 'quote_invalid', message: 'Request a fresh quote in this session before signing.' }, true);
       const settlement = await payments.redeem(payment_proof, quote, id);
       quote.consumed = true;
       if (disposed) return reply({ status: 'session_closed', quote_id: quote.id, message: 'Payment settled after session closure. Contact the operator with the quote ID.' }, true);
-      expiresAt = Date.now() + config.ACCESS_SECONDS * 1000; calls = 0; queries = 0;
+      allowance = quote.access!; expiresAt = Date.now() + allowance.seconds * 1000; calls = 0; queries = 0;
       tools.forEach(tool => tool.enable());
       clearTimeout(timer);
-      timer = setTimeout(lock, config.ACCESS_SECONDS * 1000); timer.unref();
-      return reply({ status: 'unlocked', settlement, expires_at: new Date(expiresAt).toISOString(), tools: [...tools.keys()], instructions: workflow });
+      timer = setTimeout(lock, allowance.seconds * 1000); timer.unref();
+      return reply({ status: 'unlocked', settlement, package: allowance, expires_at: new Date(expiresAt).toISOString(), tools: [...tools.keys()], instructions: workflow });
     } catch (error) {
       return reply({ status: error instanceof PaymentError ? error.code : 'service_unavailable', quote_id: quote?.id,
         message: error instanceof PaymentError ? error.message : 'The upstream service is unavailable or operator configuration is incomplete. No access was granted.' }, true);
@@ -107,3 +111,4 @@ export function buildSession(id: string, config: Config, graph: Graph, payments:
     return disposing;
   } };
 }
+

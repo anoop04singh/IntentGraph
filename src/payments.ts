@@ -5,17 +5,18 @@ import { inspectHederaTransaction } from '@x402/hedera';
 import type { PaymentPayload, PaymentRequirements, SettleResponse } from '@x402/core/types';
 import type { Config } from './config.js';
 import type { Store } from './store.js';
+import { accessPackage, type AccessPackage, type PackageId } from './pricing.js';
 
 export interface Payments {
-  requirements(): Promise<PaymentRequirements>;
+  requirements(packageId?: PackageId): Promise<PaymentRequirements>;
   redeem(proof: string, quote: Quote, session: string): Promise<SettleResponse>;
 }
 export type Quote = {
   id: string; expiresAt: number; requirements: PaymentRequirements;
-  consumed?: boolean; uncertain?: boolean;
+  consumed?: boolean; uncertain?: boolean; access?: AccessPackage;
 };
-export function newQuote(requirements: PaymentRequirements): Quote {
-  return { id: randomUUID(), expiresAt: Date.now() + 120000, requirements };
+export function newQuote(requirements: PaymentRequirements, access?: AccessPackage): Quote {
+  return { id: randomUUID(), expiresAt: Date.now() + (access?.quoteSeconds ?? 120) * 1000, requirements, access };
 }
 export class PaymentError extends Error {
   constructor(public code: string, message: string) { super(message); }
@@ -26,14 +27,14 @@ export class HederaPayments implements Payments {
   constructor(private config: Config, private store: Store, facilitator?: Pick<HTTPFacilitatorClient, 'getSupported' | 'verify' | 'settle'>) {
     this.facilitator = facilitator ?? new HTTPFacilitatorClient({ url: config.FACILITATOR_URL, timeoutMs: 30000 });
   }
-  async requirements(): Promise<PaymentRequirements> {
+  async requirements(packageId?: PackageId): Promise<PaymentRequirements> {
     if (!this.config.HEDERA_SELLER_ACCOUNT_ID) throw new PaymentError('not_configured', 'The operator must configure a receiving account.');
     const supported = await this.facilitator.getSupported();
     const kind = supported.kinds.find(k => k.x402Version === 2 && k.scheme === 'exact' && k.network === 'hedera:testnet');
     if (!kind || typeof kind.extra?.feePayer !== 'string') throw new PaymentError('unavailable', 'The facilitator is not advertising Hedera testnet payments.');
     return this.scheme.enhancePaymentRequirements({
       scheme: 'exact', network: 'hedera:testnet', asset: '0.0.0',
-      amount: this.config.PRICE_TINYBARS, payTo: this.config.HEDERA_SELLER_ACCOUNT_ID,
+      amount: accessPackage(this.config, packageId).amount, payTo: this.config.HEDERA_SELLER_ACCOUNT_ID,
       maxTimeoutSeconds: 120, extra: {},
     }, kind, supported.extensions);
   }
@@ -80,3 +81,4 @@ export class HederaPayments implements Payments {
     return result;
   }
 }
+

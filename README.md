@@ -18,7 +18,7 @@ You do not need your own Graph API key. IntentGraph authenticates to The Graph o
 
 - **Ask for blockchain data in natural language.** Your agent translates the request into discovery, schema inspection, and GraphQL calls.
 - **Access The Graph without managing a Graph key.** The service operator supplies the upstream credentials.
-- **Pay for a bounded access session.** One confirmed payment unlocks the toolkit for the advertised duration and usage allowance.
+- **Let your agent choose its access window.** Quick, Explore, and Standard packages pair shorter sessions with lower HBAR prices. One confirmed payment unlocks the selected allowance.
 - **Inspect how an answer was produced.** The playground shows tool arguments, returned data, and a settlement receipt alongside the answer.
 - **Use your preferred agent.** Connect an MCP-compatible client, or try the hosted Gemini demonstration in your browser.
 
@@ -109,11 +109,11 @@ In the browser playground, the server handles the wallet-signing and proof-submi
 >
 > The examples below are illustrative, shortened, and use placeholders. They are not live market data or copy-ready payment credentials. Discovery, activity, and schema outputs are shown as readable summaries rather than exact upstream response schemas. Actual identifiers, schemas, receipts, and values appear in your run’s console.
 
-### 1. Connect and request access
+### 1. Choose a package, connect and request access
 
 **Your intent at this step:** Give the agent permission to discover the available data tools.
 
-A fresh MCP session initially exposes only `unlock_data_access`. The agent requests a quote:
+A fresh MCP session initially exposes only `unlock_data_access`. The agent chooses the cheapest suitable package and requests a quote. This example omits the selection and therefore uses Standard:
 
 ```json
 {
@@ -300,7 +300,7 @@ If decimals are unavailable, amounts should be explicitly labeled as raw base un
 
 ## What access includes
 
-These are the application defaults; always check the actual quote from the instance you use.
+The following table describes the Standard package for backward compatibility. Shorter packages are available below; always check the actual quote from the instance you use.
 
 | Access term | Default |
 |---|---|
@@ -317,6 +317,31 @@ Keep your MCP session ID. Terminating the session, losing its ID, or restarting 
 
 The browser demo has an additional shared budget: by default, 30 attempted runs per UTC day, one active run at a time, and at most one payment attempt per run. Each run has bounded model turns, tool calls, context size, and execution time. Stopping a run stops further work, while a payment already submitted is allowed to finish safely.
 
+
+## Time-based dynamic access packages
+
+IntentGraph now prices access by package. The agent selects a server-defined package before signing, and the quoted price stays fixed through settlement. There is no subscription, automatic renewal, or surprise price change during a paid session.
+
+| Package | Default HBAR price | Access after settlement | Query attempts | Total tool calls | Quote validity |
+|---|---:|---:|---:|---:|---:|
+| Quick | 0.0025 | 5 minutes | 5 | 30 | 60 seconds |
+| Explore | 0.005 | 15 minutes | 20 | 100 | 90 seconds |
+| Standard | 0.01 | 60 minutes | 100 | 500 | 120 seconds |
+
+**Quote validity** is the time allowed to submit the payment proof. **Access duration** begins only after successful settlement. Tools disable when time expires, a usage allowance is exhausted, or the session closes. An expired quote cannot be redeemed; request a new quote before signing. A pending quote can be replaced by choosing another package, invalidating the old quote. An already active pass is not upgraded or extended by calling unlock again.
+
+In the playground, Gemini sees all packages in the unlock tool description and chooses the cheapest suitable one: Quick for a focused data lookup, Explore for broader discovery, Standard only when extended access is explicitly requested. The selected card is highlighted beside the exact price, quote deadline, and access expiry. The demo still ends its own MCP session after the answer and retains its five-minute run budget; buying longer access does not extend the browser agent's workflow. Extended sessions primarily benefit external MCP clients.
+
+```json
+{
+  "name": "unlock_data_access",
+  "arguments": { "package_id": "quick" }
+}
+```
+
+The quote returns a `package` snapshot and `access` limits alongside its exact x402 `accepts` amount. Submit the same `quote_id` and signed `payment_proof` to settle. Do not send an amount chosen by the agent: only the server calculates pricing. Omitting `package_id` on a new session retains the existing Standard behavior.
+
+No new Railway variables are required. `PRICE_TINYBARS` remains the Standard price; Quick costs one quarter and Explore one half, rounded up to whole tinybars. Existing `ACCESS_SECONDS`, `QUERY_LIMIT`, and `TOOL_CALL_LIMIT` settings cap every package. The wallet accepts only a configured package price, checks the actual balance, and the playground verifies that the returned amount matches the agent-selected package before signing. Payment receipts and volume statistics use the amount actually settled.
 ## Connect your agent
 
 Use the instance’s `/mcp` endpoint. Replace `https://YOUR_HOST` with the deployed service URL. For a default local installation, use `http://localhost:3000`; the existing development instance may use a configured alternative port.
@@ -502,3 +527,4 @@ This controls this app's request frequency; token quotas, daily quotas, and othe
 The demo now offers Gemini only the tools for its current stage: unlock, discovery, deployment activity, schema inspection, query, then answer. Query calls must use the same identifier and identifier type as a successfully inspected schema. Identical calls are blocked, activity counts remain advisory, and failed queries allow one correction before the answer stage. A successful data response (including an empty result) ends tool use. The final model turn is reserved for summarizing evidence or limitations instead of issuing more calls.
 
 The answer describes subgraph-reported data, not independently verified prices or freshness. Implausible TVL values should be flagged rather than triggering unbounded rediscovery. These demo controls are implemented in `src/demo-workflow.ts`; external MCP agents retain their normal paid tool access.
+

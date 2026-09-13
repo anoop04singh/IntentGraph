@@ -84,3 +84,10 @@ test('concurrent redemption of one transaction only settles once', async () => {
     assert.equal(results.filter(r=>r.status === 'fulfilled').length, 1); assert.equal(f.count, 1);
   } finally { store.close(); }
 });
+
+test('package quotes use their exact scaled tinybar prices',async()=>{
+ const store=new Store(':memory:');try{
+  const p=new HederaPayments({...config,PRICE_TINYBARS:'1000000',HEDERA_SELLER_ACCOUNT_ID:'0.0.123'},store,facilitator());
+  assert.equal((await p.requirements('quick')).amount,'250000');assert.equal((await p.requirements('explore')).amount,'500000');assert.equal((await p.requirements('standard')).amount,'1000000');
+ }finally{store.close();}
+});

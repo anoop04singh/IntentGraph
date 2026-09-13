@@ -69,3 +69,37 @@ test('wrong-session quote is rejected and missing schema parameters do not call 
     assert.equal(a.store.stats().toolCalls, 0);
   } finally { await a.close(); await b.close(); }
 });
+
+test('short packages bind quote expiry, access duration and query limits', async () => {
+ const a=await setup();
+ try {
+  const start=Date.now();
+  const q=parse(await a.client.callTool({name:'unlock_data_access',arguments:{package_id:'quick'}}));
+  assert.equal(q.package.id,'quick');assert.equal(q.access.seconds,300);assert.equal(q.access.queries,5);
+  assert.ok(Date.parse(q.expires_at)-start<=61000);
+  const again=parse(await a.client.callTool({name:'unlock_data_access',arguments:{package_id:'quick'}}));assert.equal(again.quote_id,q.quote_id);
+  const unlocked=parse(await a.client.callTool({name:'unlock_data_access',arguments:{quote_id:q.quote_id,payment_proof:'valid'}}));
+  assert.equal(unlocked.package.id,'quick');assert.ok(Date.parse(unlocked.expires_at)-Date.now()<=300000);
+  for(let i=0;i<5;i++)await a.client.callTool({name:'execute_query_by_subgraph_id',arguments:{subgraph_id:'id',query:'{}'}});
+  assert.equal((await a.client.listTools()).tools.length,1);
+ }finally{await a.close();}
+});
+test('changing an unpaid package invalidates its old quote; paid access cannot be upgraded for free',async()=>{
+ const a=await setup();try{
+  const q=parse(await a.client.callTool({name:'unlock_data_access',arguments:{package_id:'quick'}}));
+  const next=parse(await a.client.callTool({name:'unlock_data_access',arguments:{package_id:'explore'}}));
+  assert.notEqual(q.quote_id,next.quote_id);
+  assert.equal(parse(await a.client.callTool({name:'unlock_data_access',arguments:{quote_id:q.quote_id,payment_proof:'valid'}})).status,'quote_invalid');
+  assert.equal(parse(await a.client.callTool({name:'unlock_data_access',arguments:{quote_id:next.quote_id,payment_proof:'valid',package_id:'standard'}})).status,'quote_invalid');
+  await a.client.callTool({name:'unlock_data_access',arguments:{quote_id:next.quote_id,payment_proof:'valid'}});
+  assert.equal(parse(await a.client.callTool({name:'unlock_data_access',arguments:{package_id:'standard'}})).package.id,'explore');
+ }finally{await a.close();}
+});
+test('expired short quote cannot settle or enable data tools',async(t)=>{
+ const a=await setup();try{
+  const q=parse(await a.client.callTool({name:'unlock_data_access',arguments:{package_id:'quick'}}));
+  const now=Date.parse(q.expires_at)+1;t.mock.method(Date,'now',()=>now);
+  assert.equal(parse(await a.client.callTool({name:'unlock_data_access',arguments:{quote_id:q.quote_id,payment_proof:'valid'}})).status,'quote_invalid');
+  assert.equal((await a.client.listTools()).tools.length,1);
+ }finally{t.mock.restoreAll();await a.close();}
+});

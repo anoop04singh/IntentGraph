@@ -1,3 +1,4 @@
+import { accessPackages } from './pricing.js';
 import express from 'express';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
@@ -43,7 +44,7 @@ export function createApp(config: Config, graph: Graph, payments: Payments, stor
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ...store.stats(), activeSessions: [...sessions.values()].filter(s => s.session.active()).length,
       service: ready ? 'configured' : 'setup_required', network: 'hedera:testnet',
-      priceTinybars: config.PRICE_TINYBARS, accessSeconds: config.ACCESS_SECONDS, queryLimit: config.QUERY_LIMIT, toolCallLimit: config.TOOL_CALL_LIMIT });
+      packages: accessPackages(config), priceTinybars: config.PRICE_TINYBARS, accessSeconds: config.ACCESS_SECONDS, queryLimit: config.QUERY_LIMIT, toolCallLimit: config.TOOL_CALL_LIMIT });
   });
   app.get('/api/config', (_req, res) => res.json({ mcpUrl: `${config.PUBLIC_URL}/mcp`, network: 'hedera:testnet', transport: 'streamable-http' }));
   app.get('/api/health', (_req, res) => res.json({ status: 'ok', paymentsConfigured: ready }));
@@ -107,3 +108,4 @@ export function createApp(config: Config, graph: Graph, payments: Payments, stor
   }, 60000); sweep.unref();
   return { app, close: async () => { shuttingDown = true; clearInterval(sweep); await playground.close(); await Promise.all([...allSessions].map(s => s.dispose())); await graph.close(); } };
 }
+
